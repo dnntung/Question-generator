@@ -85,8 +85,8 @@
                 $('#loadingScreen').removeClass('d-none')
                 $('.container').addClass('blurred')
 
-                const textInput = $('#textInput').val()
-                    // console.log(textInput)
+                const textInput = $('#textInput').val().replace(/[\u200B-\u200D\uFEFF]/g, '');
+                // console.log(textInput)
 
                 fetch('/convert', {
                         method: "POST",
