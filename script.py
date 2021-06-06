@@ -1086,6 +1086,7 @@ def loadTextarea(text):
 
 
 def createQuestion(text):
+    # lines = loadFile('textFile.txt')
     lines = loadTextarea(text)
     q = []
     loss = 0
@@ -1120,10 +1121,13 @@ def createQuestion(text):
 
 if __name__ == '__main__':
     questions = createQuestion(sys.argv[1])
+    # questions = createQuestion('')
     q = questions[0]
     bad = questions[1]
 
     print('__result__')
+
+    # print(q)
     
     for i in q: 
         # Selected sentence

@@ -25,6 +25,15 @@
         bottom: 0;
         left: 0;
     }
+    
+    .info>* {
+        color: var(--bs-white)
+    }
+    
+    .info>a:hover {
+        color: var(--bs-light) !important;
+        text-decoration: underline !important;
+    }
 </style>
 
 <body>
@@ -56,6 +65,7 @@
             </div>
 
             <div id="result" class="accordion py-3 mb-3">
+                <span class="text-muted">Danh sách câu hỏi chuyển đổi được từ văn bản sẽ được hiển thị tại đây...</span>
             </div>
         </div>
     </div>
@@ -63,16 +73,31 @@
 
     <div class="fixed-bottom px-3 d-flex justify-content-between bg-primary text-white">
         <div>Question Generator</div>
-        <div>
-            <!-- <a href="facebook.com/doodleragon"></a> -->
-            Đinh Nguyễn Nhật Tùng, Nguyễn Duy Khanh
+        <div class="info">
+            <a class="text-decoration-none" href="https://www.facebook.com/doodleragon" target="_blank">Đinh Nguyễn Nhật Tùng</a>, <a class="text-decoration-none" target="_blank" href="https://www.facebook.com/duykhanh1709">Nguyễn Duy Khanh</a>
         </div>
     </div>
 
     <footer>
-        <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js" integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4" crossorigin="anonymous"></script>
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js " integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin=" anonymous "></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js " integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4 " crossorigin="anonymous "></script>
         <script>
+            const timeCounting = (runtime) => {
+                    let s = Math.trunc(runtime / 1000),
+                        m = 0,
+                        h = 0
+
+                    if (s >= 60) {
+                        m = Math.trunc(s / 60)
+                        s = s % 60
+                    }
+
+                    if (m >= 60) {
+                        h = Math.trunc(m / 60)
+                        m = m % 60
+                    }
+                    return `${h!=0?`${h} giờ`:''} ${m!=0?`${m} phút`:''} ${s} giây`.trim()
+            }
             $('#textInput').bind('change keyup input', e => {
                 const textInput = $('#textInput').val()
 
@@ -88,6 +113,9 @@
                 const textInput = $('#textInput').val().replace(/[\u200B-\u200D\uFEFF]/g, '');
                 // console.log(textInput)
 
+                //FLush the previous result
+                $('#result').html('')
+
                 fetch('/convert', {
                         method: "POST",
                         headers: {
@@ -98,21 +126,30 @@
                     .then(response => response.json())
                     .then(data => {
                         console.log(data)
-                            //FLush the previous result
-                        $('#result').html('')
+
+                        $('#resultStatus').html(`
+                            <span class="text-muted">
+                                Thời gian chạy: ~${timeCounting(data.runtime)}
+                            </span></br>
+                        `)
+
 
                         if (data.error === null) {
                             let result = data.stdout.split('__result__')
                             result = result[result.length - 1].split('\n\n').filter(e => e)
 
                             if (result.length <= 0) {
-                                $('#resultStatus').html('Chuyển đổi thất bại! Không có dữ liệu nào được chuyển đổi')
-                                $('#resultStatus').addClass('text-danger')
-                                $('#resultStatus').removeClass('text-success')
+                                $('#resultStatus').html(`${$('#resultStatus').html()}
+                                    <span class="text-danger">
+                                        <strong>Chuyển đổi thất bại!</strong> Không có dữ liệu nào được chuyển đổi
+                                    </span>
+                                `)
                             } else {
-                                $('#resultStatus').html('Chuyển đổi thành công!')
-                                $('#resultStatus').removeClass('text-danger')
-                                $('#resultStatus').addClass('text-success')
+                                $('#resultStatus').html(`${$('#resultStatus').html()}
+                                    <span class="text-success">
+                                        <strong>Chuyển đổi thành công!</strong>
+                                    </span>
+                                `)
 
                                 for (i in result) {
                                     result[i] = result[i].split('\n\t')
@@ -171,24 +208,27 @@
                                 }
                             }
                         } else {
-                            $('#resultStatus').html() = `
-                                Lỗi khi chuyển đổi! </br>
-                                <samp>${data.stderr.split('\n').filter(e => e).join('</br>')}</samp>
-                            `
-                            $('#resultStatus').addClass('text-danger')
-                            $('#resultStatus').removeClass('text-success')
+                            $('#resultStatus').html(`${$('#resultStatus').html()}
+                                <span>
+                                    <strong>Lỗi khi chuyển đổi!</strong> </br>
+                                    <samp>${data.stderr.split('\n').filter(e => e).join('</br>')}</samp>
+                                </span>
+                            `)
                         }
 
                         $('#loadingScreen').addClass('d-none')
                         $('.container').removeClass('blurred')
                     })
                     .catch(e => {
-                        $('#resultStatus').html() = `
-                            Lỗi khi chuyển đổi! </br>
-                            <samp>${e.message.split('\n').filter(e => e).join('</br>')}</samp>
-                        `
-                        $('#resultStatus').addClass('text-danger')
-                        $('#resultStatus').removeClass('text-success')
+                        $('#resultStatus').html(`${$('#resultStatus').html()}
+                            <span class="text-danger">
+                                <strong>Lỗi khi chuyển đổi!</strong> </br>
+                                <samp>${e.message.split('\n').filter(e => e).join('</br>')}</samp>
+                            </span>
+                        `)
+
+                        $('#loadingScreen').addClass('d-none')
+                        $('.container').removeClass('blurred')
                     })
             })
 

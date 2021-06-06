@@ -27,12 +27,16 @@ app.post('/convert', (req, res) => {
     //             result: result[result.length - 1].trim()
     //         })
     //     })
+
+    const start = performance.now()
+
     exec(command,
         function(error, stdout, stderr) {
             return res.json({
                 error,
                 stdout,
-                stderr
+                stderr,
+                runtime: performance.now() - start
             })
         }
     );
