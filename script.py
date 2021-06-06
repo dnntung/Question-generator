@@ -4,6 +4,7 @@
 # In[2]:
 
 
+from torch import log
 from underthesea import word_tokenize
 from underthesea import pos_tag
 from underthesea import sent_tokenize
@@ -13,7 +14,8 @@ from underthesea import classify
 from underthesea import chunk
 
 import random
-
+import sys
+import os
 
 # In[3]:
 
@@ -149,166 +151,20 @@ def xdccc(s):
     return s
 
 
-# In[5]:
-
-
-#TẠM THỜI KHÔNG LẤY BLOCK NÀY
-
-#Xử lý trường hợp câu đơn với chủ ngữ là người/con vật
-#Dạng câu hỏi: "Ai làm gì?" (S+V)
-#Dạng câu hỏi: "Ai là gì?" (S+cop+N)
-#Dạng câu hỏi: "Ai thế nào?" (S+A)
-#Dạng câu hỏi: "Ai làm gì như thế nào?" (S+V+Adv/S+Adv+V)
-def subject_root(s):
-    s_ner = ner(s)
-    s_dp = dependency_parse(s)
-    root_index = None
-    
-    # Tìm vị trí root
-    for i in range(len(s_dp)):
-        if s_dp[i][2] == 'root':
-            root_index = i
-            break
-    # Chia trường hợp vị ngữ "làm gì?", "là gì?", "thế nào?"
-    q_vingu = ''
-    if s_ner[root_index][1] == 'V':
-        q_vingu = 'làm gì?'
-        # Trường hợp "làm gì như thế nào?"
-        for i in range(len(s_dp)-1):
-            if s_dp[i][1]-1 == root_index and s_dp[i][2] == 'acomp':
-                q_vingu = 'như thế nào?'
-                nhuthenao_index = i
-                break
-             
-        # Xác định Ner LOC --> Câu hỏi "Đâu?"
-        for i in range(root_index+1, len(s_dp)-1):
-            if s_ner[i][3] == 'B-LOC' and s_dp[root_index][0] == 'đi':
-                q_vingu = 'đâu?'
-                where_index = i
-                break
-                
-    elif s_ner[root_index][1] == 'A':
-        q_vingu = 'thế nào?'
-        
-    elif s_ner[root_index][1] == 'N': # <Trường hợp câu có vị ngữ "là <Danh từ>">
-        for i in range(root_index):
-            if s_dp[i][0].lower() == 'là' and s_dp[i][1]-1 == root_index and s_dp[i][2] == 'cop':
-                q_vingu = 'là ai?'
-                root_index = i
-                break
-    else:
-        print(s_ner[root_index][1])
-        return
-    
-    q_ai = 'Ai'
-    # Trường hợp đặc biệt
-    # Ở vị trí Subject nếu có từ "con" là "det:clf" thì câu hỏi "Ai?" --> "Con gì?". Ngoại trừ trường hợp "Con gái", "Con trai"
-    for i in range(root_index):
-        if s_dp[i][0].lower() == 'con' and s_dp[i][2] == 'det:clf':
-            # Parent of nsubj must be root
-            nsubj_index = s_dp[i][1] - 1
-
-            if s_dp[nsubj_index][1]-1 == root_index and                 s_dp[nsubj_index][0].lower() != 'gái' and                     s_dp[nsubj_index][0].lower() != 'trai':
-                        q_ai = 'Con gì'
-                        break
-        # Công ty tổ chức (ORG-NER)
-        if s_ner[i][3] == 'B-ORG':
-            q_ai = 'Tổ chức nào'
-    
-    # Bước tạo câu hỏi cho từng dạng:
-    r_ai = ''
-    r_vn = ''
-    q_vn = ''
-    # Dạng 1: Ai làm gì? (S+V) và Ai là gì? (S+cop+N)
-    if q_vingu == 'làm gì?' or q_vingu =='là ai?':
-        # Tạo câu hỏi "Ai"
-        for i in range(root_index, len(s_dp)-1):
-            q_ai += ' ' + s_dp[i][0]
-            r_vn += s_dp[i][0] + ' '
-        q_ai += '?'
-        
-        # Tạo câu hỏi cho vị ngữ"
-        for i in range(root_index):
-            q_vn += s_dp[i][0] + ' '
-            r_ai += s_dp[i][0] + ' '
-        q_vn += q_vingu
-        
-    # Dạng 2: Ai làm gì như thế nào? (S+V+Adv)
-    elif q_vingu == 'như thế nào?':
-        # Tạo câu hỏi "Ai"
-        for i in range(root_index, len(s_dp)-1):
-            q_ai += ' ' + s_dp[i][0]
-            if s_dp[i][1]-1 == root_index and s_dp[i][2] == 'acomp':
-                r_vn += s_dp[i][0] + ' '
-                # Kiểm tra còn từ nào liên quan với từ hiện tại không.
-                for i in range(nhuthenao_index+1, len(s_dp)-1):
-                    if s_dp[i][1]-1 == nhuthenao_index:
-                        r_vn += s_dp[i][0] + ' '
-                    
-        q_ai += '?'
-        
-        # Tạo câu hỏi cho vị ngữ
-        for i in range(nhuthenao_index):
-            q_vn += s_dp[i][0] + ' '
-            if i < root_index:
-                r_ai += s_dp[i][0] + ' '
-        q_vn += q_vingu
-        
-    # Dạng 3: Ai thế nào? (S+Adj)
-    elif q_vingu == 'thế nào?':       
-        # Tạo câu hỏi "Ai"     
-        for i in range(root_index, len(s_dp)-1):
-            q_ai += ' ' + s_dp[i][0]
-            r_vn += s_dp[i][0] + ' '
-        q_ai += '?'
-        
-        # Tạo câu hỏi cho vị ngữ
-        for i in range(root_index):
-            if s_dp[i][2] != 'advmod' or s_dp[i][1]-1 != root_index:
-                q_vn += s_dp[i][0] + ' '
-                r_ai += s_dp[i][0] + ' '
-        q_vn += q_vingu
-        
-    # Dạng 4: Đâu? (LOC-NER)
-    elif q_vingu == 'đâu?':       
-        # Tạo câu hỏi "Ai"     
-        for i in range(root_index, len(s_dp)-1):
-            q_ai += ' ' + s_dp[i][0]
-        q_ai += '?'
-        
-        # Tạo câu hỏi cho vị ngữ
-        for i in range(root_index):
-            r_ai += s_dp[i][0] + ' '
-            
-        for i in range(where_index, len(s_ner)-1):
-            if s_ner[i][3] == 'B-LOC' or s_ner[i][3] == 'I-LOC':
-                r_vn += ' ' + s_ner[i][0]
-        q_vn = s.replace(r_vn.strip(), 'đâu')
-        q_vn = q_vn.replace('.', '?')
-        
-
-    return [
-        [q_ai, r_ai.strip().capitalize()],
-        [q_vn, r_vn.strip().capitalize()]
-    ]
-
-
 # In[6]:
 
+dongtu_ymuon = 'toan, định, dám, chịu, buồn, nỡ, dự định, muốn, mong, chúc'
+dongtu_batdau_tiepdien_ketthuc = 'bắt đầu, tiếp tục, hết, thôi, chuẩn bị'
+daitu = 'tôi, tao, ta, tớ, mình, chúng tôi, chúng ta, chúng tớ, chúng tao, chúng mình, bọn tao, bạn, các bạn, đằng ấy, mày, bọn mày, tên kia, anh, cậu, ông, gã, y, hắn, thằng, cô, chị, bà, ả, thị, cổ, bả, chúng nó, họ, bọn họ, bọn chúng, nó, bác, chú, mợ, dì, thím, nhân, dân, chủ, người, thầy, công, vợ, chồng, mẹ, cha, ba, tía, má, u, bầm, nữ, bố, trai, gái'
+gioitu_noichon = 'ở, tại, trong, ngoài, trên, dưới, giữa'
+gioitu_cachthuc = 'bằng'
+gioitu_thoigian = 'vào, lúc, khi'
 
-#TẠM THỜI KHÔNG LẤY BLOCK NÀY
-
-# Câu đơn có trạng ngữ đứng đầu câu (Thời gian, nơi chốn)
-# Xác định cụm trạng ngữ (Không được chứa cụm C-V, cuối trạng ngữ phải có dấu phẩy)
-# Xác định cụm chủ ngữ
-# Xác định cụm vị ngữ
-# Điều kiện là các cụm phải liên tiếp với nhau
-
-# Xử lý trường hợp câu đơn với trạng ngữ đứng đầu câu (Không tính cụm trạng ngữ nhiều loại)
-# Dạng câu hỏi: "Khi nào/Lúc nào?"
-# Dạng câu hỏi: "Ở đâu?"
-def adverb_subject_root(s):
-    s_dp = dp_tree(s)
+def bongu_mieuta(s, s_dp):
+    ns = s
+    if s[-1] == '.':
+        ns = s[:-1]
+    #s_dp = dp_tree(s)
     root_index = None
     # Tìm vị trí root
     for i in range(len(s_dp)):
@@ -316,239 +172,62 @@ def adverb_subject_root(s):
             root_index = i
             break
     
-    # Tìm vị trí của từng cụm trạng ngữ, chủ ngữ, vị ngữ
-    t_index = None
-    c_index = None
-    v_index = root_index
-    
-    
-    q_when = 'Khi nào'
-    q_where = 'ở đâu'
-    q_tn = ''
-    for i in range(len(s_dp)):
-        if s_dp[i][2] == 'obl' or s_dp[i][2] == 'obl:tmod':
-            t_index = i
-            cum_tn = xd_ct(s_dp, t_index)
-            # Kiểm tra trạng ngữ chỉ thời gian hay địa điểm
-            if s_dp[i][2] == 'obl':
-                q_tn = q_where
-                if s_dp[i][0].lower() == 'thứ':
-                    q_tn = q_when
-                
+    # Đặt câu hỏi cho bổ ngữ miêu tả (trả lời cho câu hỏi cách thức, trạng thái, tính chất, mục đích, nơi chốn)
+    qa = []
+    list_obl = []
+    for i in s_dp[root_index][6]:
+        if i <= root_index:
+            continue
+        if 'obl' in s_dp[i][2] and s_dp[i][1] == root_index:
+            list_obl.append(i)
+            cum_tn = xd_ct(s_dp, i)
+            list_gt = []
+            for j in s_dp[i][6]:
+                if s_dp[j][4] == 'B-PP':
+                    list_gt.append(j)
+            if len(list_gt) >= 1:
+                # Trường hợp có giới từ
+                # Giới từ chỉ cách thức
+                for i in list_gt:
+                    if s_dp[i][0].lower() == 'bằng':
+                        qa.append(['Bằng cách nào ' + xvhccd(s[:-1].replace(' ' + cum_tn, '')) + '?', vhccd(cum_tn)])
+
+                # Giới từ chỉ nơi chốn
+                set_gioitu_noichon = gioitu_noichon.split(', ')
+                for i in list_gt:
+                    if s_dp[i][0].lower() in set_gioitu_noichon:
+                        qa.append([ns.replace(' ' + cum_tn, '') + ' ở đâu?', vhccd(cum_tn)])
+                # Giới từ chỉ thời gian
+                set_gioitu_thoigian = gioitu_thoigian.split(', ')
+                for i in list_gt:
+                    if s_dp[i][0].lower() in set_gioitu_thoigian:
+                        qa.append(['Khi nào ' + xvhccd(ns.replace(' ' + cum_tn, '')) + '?', vhccd(cum_tn)])
+
             else:
-                q_tn = q_when
-                if s_dp[i][0].lower() == 'ngày':
-                    q_tn = 'vào ngày mấy'
-        elif s_dp[i][2] == 'nsubj':
-            c_index = i
-            cum_cn = xd_ct(s_dp, c_index)
-    
-    
-    # Xác định cụm vị ngữ
-    cum_vn = s.replace(cum_tn, '')
-    cum_vn = cum_vn.replace(cum_cn, '')
-    cum_vn = cum_vn[:-1]
-    cum_vn = cum_vn.strip()
-    
-    Cn_Vn = cum_cn.capitalize() + ' ' + cum_vn + '.'
-    q_Cn_Vn = subject_root(Cn_Vn)
-    
-    
-    if q_tn == q_where:
-        # CN + VN + ở đâu?
-        q_tn = cum_cn.capitalize() + ' ' + cum_vn + ' ' + q_tn + '?' 
-        r_tn = cum_tn.replace(',', '')
-        
-        # Ai + VN + TN?
-        q_tmp = q_tn[0].lower() + q_tn[1:]
-        q_Cn_Vn[0][0] = q_Cn_Vn[0][0][:-1] + ' ' + q_tmp + '?'
-        
-        # CN + làm gì/thế nào/là gì + TN?
-        q_Cn_Vn[1][0] = q_Cn_Vn[1][0][:-1] + ' ' + q_tmp + '?'
-        
-    else:
-        # Khi nào CN + VN?
-        if q_tn == 'Khi nào':
-            q_tn = q_tn + ' ' + cum_cn + ' ' + cum_vn + '?'
-        else:
-            q_tn = cum_cn.capitalize() + ' ' + cum_vn + ' ' + q_tn +'?'
-        r_tn = cum_tn.replace(',', '')
-        
-        tu_noi_when = ''
-        # Check xem trong cụm TN có từ khi/lúc/vào hay không.
-        
-        vao_tu_noi = []
-        for i in range(len(cum_tn.split())):
-            if (s_dp[i][0].lower() == 'ngày' and s_dp[i][2] == 'obl:tmod')             or s_dp[i][2] == 'flat:date' or s_dp[i][0].lower() == 'tháng' or s_dp[i][0].lower() == 'năm' or s_dp[i][0].lower() == 'tuần':
-                tu_noi_when = 'vào'
-                break
-            elif s_dp[i][2] == 'flat:time':
-                tu_noi_when = 'lúc'
-                break
-            else:
-                tu_noi_when = 'khi'
-                
-        ignore_tu_noi = ['khi', 'vào', 'lúc', 'hôm nay', 'ngày mai', 'hôm qua']
-        for i in ignore_tu_noi:
-            if i in cum_tn.lower():
-                tu_noi_when = ''
-                
-        # Ai + VN + khi/vào/lúc + TN?
-        cum_tmp = cum_tn[0].lower() + cum_tn[1:-1]
-        q_Cn_Vn[0][0] = q_Cn_Vn[0][0][:-1] + ' ' + tu_noi_when + ' ' + cum_tmp + '?'
-        q_Cn_Vn[0][0] = " ".join(q_Cn_Vn[0][0].split())
-    
-        # CN + làm gì/thế nào/là gì + khi/vào/lúc + TN?
-        q_Cn_Vn[1][0] = q_Cn_Vn[1][0][:-1] + ' ' + tu_noi_when + ' ' + cum_tmp + '?'
-        q_Cn_Vn[1][0] = " ".join(q_Cn_Vn[1][0].split())
-    
-    q_Cn_Vn.append([q_tn, r_tn])
-    return q_Cn_Vn
-
-
-# In[7]:
-
-
-#TẠM THỜI KHÔNG LẤY BLOCK NÀY
-
-def filter_format(s):
-    s_dp = dp_tree(s)
-    
-    if s[-1] != '.':
-        return [False, False]
-    elif s[-1] == '.' and s[-2] == '.':
-        return [False, False]
-    
-    root_index = None
-    # Tìm vị trí root
-    for i in range(len(s_dp)):
-        if s_dp[i][2] == 'root':
-            if root_index is None:
-                root_index = i
-            # Kiểm tra xem có 2 root không
-            else:
-                return [False, False]
-    
-    # Kiểm tra có root không
-    if root_index is None:
-        return [False, False]
-    
-    
-    childs_root_index = s_dp[root_index][-1]
-    
-    # Kiểm tra nhiều CN-VN
-    nhieu_CN = False
-    nhieu_VN = False
-    for i in range(len(s_dp)):
-        if i < root_index and s_dp[i][2] == 'conj':
-            nhieu_CN = True
-        elif i > root_index and s_dp[i][2] == 'conj' and s_dp[i][1] == root_index and len(s_dp[i][-1]) > 2:
-            nhieu_VN = True
-            
-    
-    CN_VN = False
-    TN_CN_VN = False
-    
-    if s_dp[childs_root_index[0]][2] == 'nsubj' and     ((s_dp[childs_root_index[1]][2] == 'root' and (s_dp[childs_root_index[1]][3] == 'A' or s_dp[childs_root_index[1]][3] == 'V')) or      (s_dp[childs_root_index[2]][2] == 'root' and ((s_dp[childs_root_index[2]][3] == 'N' and s_dp[childs_root_index[1]][0] == 'là') or s_dp[childs_root_index[2]][3] == 'A'))):
-        if not nhieu_CN and not nhieu_VN:
-            CN_VN = True
-    
-    if (s_dp[childs_root_index[0]][2] == 'obl:tmod' or s_dp[childs_root_index[0]][2] == 'obl') and     s_dp[childs_root_index[1]][2] == 'nsubj' and     ((s_dp[childs_root_index[2]][2] == 'root' and (s_dp[childs_root_index[2]][3] == 'A' or s_dp[childs_root_index[2]][3] == 'V')) or      (s_dp[childs_root_index[3]][2] == 'root' and ((s_dp[childs_root_index[3]][3] == 'N' and s_dp[childs_root_index[2]][0] == 'là') or s_dp[childs_root_index[3]][3] == 'A'))):
-        if not nhieu_CN and not nhieu_VN:
-            TN_CN_VN = True
-            
-    return [CN_VN, TN_CN_VN]
-        
-
-
-# filename = 'testcase_caudon_s_root.txt'
-# lines = []
-# with open(filename,'r') as f:
-#     for s in f:
-#         # Tách câu
-#         st = sent_tokenize(s.strip())
-#         lines.extend(st)
-# for l in lines:
-#     qa = subject_root(l)
-#     print(l, ' --- ', qa)
-
-# filename = 'testcase_caudon_tn.txt'
-# lines = []
-# with open(filename,'r') as f:
-#     for s in f:
-#         # Tách câu
-#         st = sent_tokenize(s.strip())
-#         lines.extend(st)
-# for l in lines:
-#     qa = adverb_subject_root(l)
-#     print(l, ' --- ', qa)
-
-# print(dependency_parse('Tháng 7, Bác Hồ đọc bản tuyên ngôn độc lập.'))
-# print(ner('8 giờ sáng ngày mai, Bác Hồ đọc bản tuyên ngôn độc lập.'))
-# print(dependency_parse('3 giờ nữa, Bác Hồ đọc bản tuyên ngôn độc lập.'))
-# print(ner('3 giờ nữa, Bác Hồ đọc bản tuyên ngôn độc lập.'))
-# print(dependency_parse('Ngày mai, tôi được trở thành thầy giáo.'))
-# print(ner('Ngày mai, tôi được trở thành thầy giáo.'))
-# print(dependency_parse('Bác nông dân cày ruộng.'))
-# print(ner('Bác nông dân cày ruộng.'))
-# print(dependency_parse('Cái ghế nằm dưới góc nhà.'))
-# print(ner('Cái ghế nằm dưới góc nhà.'))
-
-# error = []
-# for l in lines:
-#     s_dp = dp_tree(l)
-#     # Tìm vị trí root
-#     for i in range(len(s_dp)):
-#         if s_dp[i][2] == 'root':
-#             root_index = i
-#             break
-#     s_new = xd_ct(s_dp, root_index)
-#     print(l, ' --- ', s_new)
-#     if l != s_new:
-#         error.append(l)
-# for i in error:
-#     print(dp_tree(i))
-
-# In[8]:
-
-
-#TẠM THỜI KHÔNG LẤY BLOCK NÀY
-
-# filename = 'data.txt'
-# lines = []
-# with open(filename,'r') as f:
-#     for s in f:
-#         # Tách câu
-#         st = sent_tokenize(s.strip())
-#         lines.extend(st)
-# for l in lines:
-#     check = filter_format(l)
-#     if check[0]:
-#         qa = subject_root(l)
-#     elif check[1]:  
-#         qa = adverb_subject_root(l)
-#     else:
-#         print(l, ' --- ', 'SAI FORMAT')
-#         continue
-#     print(l, ' --- ', qa)
-
-
+                if 'tmod' in s_dp[i][2]:
+                    for i in s_dp[i][6]:
+                        if s_dp[i][0].lower() == 'ngày':
+                            qa.append(['Vào ngày mấy ' + xvhccd(ns.replace(' ' + cum_tn, '')) + '?', vhccd(cum_tn)])
+                            return qa
+                    qa.append(['Khi nào ' + xvhccd(ns.replace(' ' + cum_tn, '')) + '?', vhccd(cum_tn)])
+    return qa
 # In[250]:
 
-
-daitu = 'tôi, tao, ta, tớ, mình, chúng tôi, chúng ta, chúng tớ, chúng tao, chúng mình, bọn tao, bạn, các bạn, đằng ấy, mày, bọn mày, tên kia, anh, cậu, ông, gã, y, hắn, thằng, cô, chị, bà, ả, thị, cổ, bả, chúng nó, họ, bọn họ, bọn chúng, nó, bác, chú, mợ, dì, thím, nhân, dân, chủ, người, thầy, công, vợ, chồng, mẹ, cha, ba, tía, má, u, bầm, nữ, bố, trai, gái'
+### TEMPLATE Chủ ngữ + là + danh từ 
 
 ### TEMPLATE Chủ ngữ + là + danh từ 
-def temp_cn_la_danhtu(s):
-    s_dp = dp_tree(s)
+def temp_cn_la_danhtu(s, s_dp):
+    #s_dp = dp_tree(s)
     root_index = None
     # Tìm vị trí root
     for i in range(len(s_dp)):
         if s_dp[i][2] == 'root':
             if s_dp[i][4] != 'B-NP':
                 return 'SAI FORMAT'
-            root_index = i
-            break
+            if root_index is None:
+                root_index = i
+            else:
+                return 'SAI FORMAT'
     if root_index is None:
         return 'SAI FORMAT'
     
@@ -567,7 +246,7 @@ def temp_cn_la_danhtu(s):
     for i in range(s_dp[cn_index][6][-1] + 1, root_index):
         if s_dp[i][2] == 'cop' and s_dp[i][0] == 'là' and len(s_dp[i][6]) == 1:
             if la_index is None:
-                la_index = s_dp[root_index][6][1]
+                la_index = i
             else:
                 return 'SAI FORMAT'
             
@@ -576,14 +255,16 @@ def temp_cn_la_danhtu(s):
             if 'NP' not in s_dp[i][4]:
                 return 'SAI FORMAT'
         s = s.replace(vhccd(xd_ct(s_dp, cn_index)), vhccd(xd_ct(s_dp, cn_index)) + ' có')
-        return temp_cn_dongtu(s)
+        s_dp = dp_tree(s)
+        return temp_cn_dongtu(s, s_dp)
     
 
    
     # Check format: Danh từ xuất hiện cuối câu, chỉ có danh từ là root.
     for i in range(la_index + 1, len(s_dp)-1):
         mqh = s_dp[i][2]
-        if mqh == 'advcl' or mqh == 'parataxis'             or mqh == 'mark' or mqh == 'ccomp':
+        if mqh == 'advcl' or mqh == 'parataxis' \
+            or mqh == 'mark' or mqh == 'ccomp':
             return 'SAI FORMAT'
         # Nếu có trường hợp conj và cc thì kiểm tra có phải là mệnh đề không (kiểm tra kiểu chunking)
         if mqh == 'conj':
@@ -596,8 +277,13 @@ def temp_cn_la_danhtu(s):
     # Trường hợp ccn = 0: Chủ ngữ là trường hợp khác
     ccn = 0
     subj = xd_ct(s_dp, cn_index)
-    danhtu = s.replace(subj + ' là ', '')
-    
+    danhtu = ''
+    for i in range(la_index + 1, len(s_dp)-1):
+        if s_dp[i][2] == 'punct':
+            danhtu += s_dp[i][0]
+        else:
+            danhtu += ' ' + s_dp[i][0]
+    danhtu = danhtu.strip()
     # Trường hợp ccn = 4: Chủ ngữ là cụm tính từ
     if 'asubj' in s_dp[cn_index][2]:
         ccn = 4
@@ -691,25 +377,28 @@ def temp_cn_la_danhtu(s):
         # Trường hợp vị ngữ là vật
         if generate:
             qa.append([subj + ' là gì?', vhccd(xdccc(danhtu))])
-    
+    qa.extend(bongu_mieuta(s, s_dp))
     return qa
     
-
 
 # In[251]:
 
 
 ### TEMPLATE Chủ ngữ + (là) + tính từ
-def temp_cn_tinhtu(s):
-    s_dp = dp_tree(s)
+### TEMPLATE Chủ ngữ + (là) + tính từ
+### TEMPLATE Chủ ngữ + (là) + tính từ
+def temp_cn_tinhtu(s, s_dp):
+    #s_dp = dp_tree(s)
     root_index = None
     # Tìm vị trí root
     for i in range(len(s_dp)):
         if s_dp[i][2] == 'root':
             if s_dp[i][4] != 'B-AP':
                 return 'SAI FORMAT'
-            root_index = i
-            break
+            if root_index is None:
+                root_index = i
+            else:
+                return 'SAI FORMAT'
     if root_index is None:
         return 'SAI FORMAT'
     
@@ -717,12 +406,18 @@ def temp_cn_tinhtu(s):
     cn_index = s_dp[root_index][6][0]
     if 'subj' not in s_dp[cn_index][2]:
         return 'SAI FORMAT'
+    
+    # Check nhiều chủ ngữ
+    for i in range(cn_index+1, root_index):
+        if 'subj' in s_dp[i][2]:
+            return 'SAI FORMAT'
 
     # Check format: Tính từ xuất hiện cuối câu, chỉ có tính từ là root.
     last_cn_index = s_dp[cn_index][6][-1]
     for i in range(last_cn_index + 1, len(s_dp)-1):
         mqh = s_dp[i][2]
-        if mqh == 'advcl' or mqh == 'parataxis'             or mqh == 'mark' or mqh == 'ccomp':
+        if mqh == 'advcl' or mqh == 'parataxis' \
+            or mqh == 'mark' or mqh == 'ccomp':
             return 'SAI FORMAT'
         # Nếu có trường hợp conj và cc thì kiểm tra có phải là mệnh đề không (kiểm tra kiểu chunking)
         if mqh == 'conj':
@@ -763,15 +458,14 @@ def temp_cn_tinhtu(s):
             
         # ĐẶT CÂU HỎI CHO CHỦ NGỮ
         if ccn == 2:
-            for i in s_dp[cn_index][6]:
-                # Trường hợp chủ ngữ là tên riêng PER (NER)
-                if (s_dp[i][5] == 'B-PER'):
-                    qa.append(['Ai ' + xdccc(tinhtu) + '?', subj])
-                    break
-                # Trường hợp chủ ngữ là tên địa danh LOC (NER)
-                elif (s_dp[i][5] == 'B-LOC'):
-                    qa.append(['Đâu là nơi ' + xdccc(tinhtu) + '?', subj])
-                    break
+            # Trường hợp chủ ngữ là tên riêng PER (NER)
+            if (s_dp[cn_index][5] == 'B-PER'):
+                qa.append(['Ai ' + xdccc(tinhtu) + '?', subj])
+                
+            # Trường hợp chủ ngữ là tên địa danh LOC (NER)
+            elif (s_dp[cn_index][5] == 'B-LOC'):
+                qa.append(['Đâu là nơi ' + xdccc(tinhtu) + '?', subj])
+                
             
             if len(qa) == 0:
                 # Trường hợp chủ ngữ là đại từ nhân xưng
@@ -794,25 +488,27 @@ def temp_cn_tinhtu(s):
     # ĐẶT CÂU HỎI CHO VỊ NGỮ
     if len(qa) <= 1:
         qa.append([subj + ' có đặc điểm gì?', vhccd(xdccc(tinhtu))])
+    qa.extend(bongu_mieuta(s, s_dp))
     return qa
-
 
 # In[301]:
 
 
-dongtu_ymuon = 'toan, định, dám, chịu, buồn, nỡ, dự định, muốn, mong, chúc'
-dongtu_batdau_tiepdien_ketthuc = 'bắt đầu, tiếp tục, hết, thôi, chuẩn bị'
 ### TEMPLATE Chủ ngữ + động từ
-def temp_cn_dongtu(s):
-    s_dp = dp_tree(s)
+### TEMPLATE Chủ ngữ + động từ
+def temp_cn_dongtu(s, s_dp):
+    #s_dp = dp_tree(s)
     root_index = None
     # Tìm vị trí root
     for i in range(len(s_dp)):
         if s_dp[i][2] == 'root':
             if s_dp[i][4] != 'B-VP':
                 return 'SAI FORMAT'
-            root_index = i
-            break
+            if root_index is None:
+                root_index = i
+            else:
+                return 'SAI FORMAT'
+            
     if root_index is None:
         return 'SAI FORMAT'
     
@@ -820,6 +516,11 @@ def temp_cn_dongtu(s):
     cn_index = s_dp[root_index][6][0]
     if 'subj' not in s_dp[cn_index][2]:
         return 'SAI FORMAT'
+    
+    # Check nhiều chủ ngữ
+    for i in range(cn_index+1, root_index):
+        if 'subj' in s_dp[i][2]:
+            return 'SAI FORMAT'
 
     # Check format: Động từ xuất hiện cuối câu, chỉ có động từ là root.
     last_cn_index = s_dp[cn_index][6][-1]
@@ -865,15 +566,15 @@ def temp_cn_dongtu(s):
 
         # ĐẶT CÂU HỎI CHO CHỦ NGỮ
         if ccn == 2:
-            for i in s_dp[cn_index][6]:
-                # Trường hợp chủ ngữ là tên riêng PER (NER)
-                if (s_dp[i][5] == 'B-PER'):
-                    qa.append(['Ai ' + xdccc(dongtu) + '?', subj])
-                    break
-                # Trường hợp chủ ngữ là tên địa danh LOC (NER)
-                elif (s_dp[i][5] == 'B-LOC'):
-                    qa.append(['Đâu là nơi ' + xdccc(dongtu) + '?', subj])
-                    break
+            
+            # Trường hợp chủ ngữ là tên riêng PER (NER)
+            if (s_dp[cn_index][5] == 'B-PER'):
+                qa.append(['Ai ' + xdccc(dongtu) + '?', subj])
+                
+            # Trường hợp chủ ngữ là tên địa danh LOC (NER)
+            elif (s_dp[cn_index][5] == 'B-LOC'):
+                qa.append(['Đâu là nơi ' + xdccc(dongtu) + '?', subj])
+                
 
             if len(qa) == 0:
                 # Trường hợp chủ ngữ là đại từ nhân xưng
@@ -927,15 +628,28 @@ def temp_cn_dongtu(s):
         for i in range(root_index, len(s_dp)-1):
             mqh = s_dp[i][2]
             cn_index_ccomp = s_dp[i][6][0]
+            # Trường hợp vn_dongtu = 11: Root là động từ có.
+            if s_dp[root_index][0] == 'có':
+                vn_dongtu = 11
+                for i in range(root_index+1, len(s_dp)-1):
+                    if s_dp[i][2] == 'acomp' and s_dp[i][6][-1] == len(s_dp)-2:
+                        qa.append([s[:-1].replace(xd_ct(s_dp, i), 'như thế nào') + '?', vhccd(xd_ct(s_dp, i))])
+                after_sent = ''
+                for j in range(root_index, len(s_dp)-1):
+                    after_sent += s_dp[j][0] + ' '
+                qa.append([subj + ' có cái gì?', vhccd(after_sent.strip())])
+                break
+            
             # Truong hop vn_dongtu = 1: Subj + V(root) + Subj + (V/N/A)(ccomp) + (obj)
-            if s_dp[i][1] == root_index and mqh == 'ccomp' and 'subj' in s_dp[cn_index_ccomp][2]:
+            elif s_dp[i][1] == root_index and mqh == 'ccomp' and 'subj' in s_dp[cn_index_ccomp][2]:
                 vn_dongtu = 1
                 bongu_ccomp = xd_ct(s_dp, i)
+                bongu_ccomp_dp = dp_tree(bongu_ccomp)
                 pre_sent = s.replace(bongu_ccomp, '')
                 pre_sent = pre_sent[:-1].strip()
-                cn_dongtu = temp_cn_dongtu(bongu_ccomp)
-                cn_tinhtu = temp_cn_tinhtu(bongu_ccomp)
-                cn_la_danhtu = temp_cn_la_danhtu(bongu_ccomp)
+                cn_dongtu = temp_cn_dongtu(bongu_ccomp, bongu_ccomp_dp)
+                cn_tinhtu = temp_cn_tinhtu(bongu_ccomp, bongu_ccomp_dp)
+                cn_la_danhtu = temp_cn_la_danhtu(bongu_ccomp, bongu_ccomp_dp)
                 if (cn_dongtu != 'SAI FORMAT'):
                     for j in range(len(cn_dongtu)):
                         qa.append([pre_sent + ' ' + xvhccd(cn_dongtu[j][0]), cn_dongtu[j][1]])
@@ -993,9 +707,9 @@ def temp_cn_dongtu(s):
             elif s_dp[i][1] == root_index and 'obl:' in s_dp[i][2] and 'comp' in s_dp[i][2] :
                 vn_dongtu = 6
                 if 'LOC' in s_dp[i][5]:
-                    qa.append([s[:-1].replace(s_dp[i][0], 'đâu') + '?', vhccd(xd_ct(s_dp, i))])
+                    qa.append([s[:-1].replace(xd_ct(s_dp, i), 'đâu') + '?', vhccd(xd_ct(s_dp, i))])
                 else:
-                    qa.append([s[:-1].replace(s_dp[i][0], 'gì') + '?', vhccd(xd_ct(s_dp, i))])
+                    qa.append([s[:-1].replace(xd_ct(s_dp, i), 'gì') + '?', vhccd(xd_ct(s_dp, i))])
                 break
 
             
@@ -1034,12 +748,16 @@ def temp_cn_dongtu(s):
                             elif theloai_obj == 1:
                                 loai = 'con gì'
                             parent = s_dp[j][1]
+                            
                             if parent == root_index:
                                 quesobj = vhccd(xd_ct(s_dp, cn_index)) + ' ' + s_dp[root_index][0] + ' ' + xd_ct(s_dp, j) + '?'
                             else:
                                 quesobj = vhccd(xd_ct(s_dp, cn_index)) + ' ' + xd_ct(s_dp, parent) + '?'
-                            qa.append([quesobj.replace(xd_ct(s_dp, j), loai), vhccd(xd_ct(s_dp, j))])
-                        
+                            if s_dp[parent][0].lower() == 'đi' or s_dp[parent][0].lower() == 'về' or s_dp[parent][0].lower() == 'đến' or s_dp[parent][0].lower() == 'tới':
+                                qa.append([quesobj.replace(xd_ct(s_dp, j), 'đâu'), vhccd(xd_ct(s_dp, j))])
+                            else:
+                                qa.append([quesobj.replace(xd_ct(s_dp, j), loai), vhccd(xd_ct(s_dp, j))])
+
             # Trường hợp vn_dongtu = 10: Sau root là một acomp bổ ngữ cho động từ.
             elif s_dp[i][1] == root_index and 'acomp' in mqh and s_dp[i][4] == 'B-AP':
                 vn_dongtu = 10
@@ -1115,32 +833,159 @@ def temp_cn_dongtu(s):
                 break
             '''
             
-            
-
-        # Trường hợp vn_dongtu = 11: Root là động từ có.
-        if s_dp[root_index][0] == 'có':
-            vn_dongtu = 11
-            for i in range(root_index+1, len(s_dp)-1):
-                if s_dp[i][2] == 'acomp' and s_dp[i][6][-1] == len(s_dp)-2:
-                    qa.append([s[:-1].replace(xd_ct(s_dp, i), 'như thế nào') + '?', vhccd(xd_ct(s_dp, i))])
-            after_sent = ''
-            for j in range(root_index, len(s_dp)-1):
-                after_sent += s_dp[j][0] + ' '
-            qa.append([subj + ' có cái gì?', vhccd(after_sent.strip())])
         # Trường hợp cơ bản
         if vn_dongtu == 0:
             for i in range(root_index + 1, -1):
                 if s_dp[i][4] != 'B-VP':
                     return 'SAI FORMAT'
             qa.append([subj + ' làm gì?', vhccd(xdccc(dongtu))])             
-        
+        qa.extend(bongu_mieuta(s, s_dp))
     return qa
 
+def xuly_trangngu_daucau(s, s_dp):
+    #s_dp = dp_tree(s)
+    root_index = None
+    # Tìm vị trí root
+    for i in range(len(s_dp)):
+        if s_dp[i][2] == 'root':
+            if s_dp[i][4] != 'B-VP':
+                return 'SAI FORMAT'
+            if root_index is None:
+                root_index = i
+            else:
+                return 'SAI FORMAT'
+            
+    if root_index is None:
+        return 'SAI FORMAT'
+    
+    # Check format: Trạng ngữ phải xuất hiện đầu câu
+    tn_index = s_dp[root_index][6][0]
+    if 'obl' not in s_dp[tn_index][2] and 'advcl' not in s_dp[tn_index][2]:
+        return 'SAI FORMAT'
+    
+    # Tìm vị trí chủ ngữ
+    cn_index = None
+    for i in s_dp[root_index][6]:
+        if i == root_index:
+            break
+        if 'subj' in s_dp[i][2]:
+            if cn_index is not None:
+                return 'SAI FORMAT'
+            cn_index = i
+            
+    if cn_index is None:
+        return 'SAI FORMAT'
+    qa = []
+   
+    cum_tn = xd_ct(s_dp, tn_index)
+    cum_cn = xd_ct(s_dp, cn_index)
+    cn_index_last = s_dp[cn_index][6][-1]
+    cum_vn = ''
+    
+    for i in range(cn_index_last+1, len(s_dp)-1):
+        if s_dp[i][2] == 'punct':
+            cum_vn += s_dp[i][0]
+        else:
+            cum_vn += ' ' + s_dp[i][0]
+    cum_vn = cum_vn.strip()
+    cau = cum_cn + ' ' + cum_vn
+    dau = ''
+    cau = vhccd(cau)
+    cau_dp = dp_tree(cau)
+    if cau[0] == ',':
+        cau = cau.replace(',', '', 1)
+        dau = ','
+    if 'obl' in s_dp[tn_index][2]:
+        list_obl = []
+        dauphay_root_index = []
+        # Check thành phần phía trước vị ngữ chỉ có trạng ngữ và chủ ngữ
+        for i in s_dp[root_index][6]:
+            if i == root_index:
+                break
+            if s_dp[i][2] != 'punct' and 'obl' not in s_dp[i][2] and 'subj' not in s_dp[i][2]:
+                return 'SAI FORMAT'
+            if 'obl' in s_dp[i][2]:
+                list_obl.append(i)
+            if s_dp[i][2] == 'punct':
+                dauphay_root_index.append(i)
+        if len(list_obl) >= 2:
+            for i in list_obl[1:]:
+                obl = xd_ct(s_dp, i)
+                if obl[-1] == ',':
+                    obl = obl[:-1]
+                s = s.replace(' ' + obl, '')
+                if s[-3:] == '...':
+                    s = s[:-3] + ' ' + obl + '...'
+                else:
+                    s = s[:-1] + ' ' + obl + '.'
+            
+            for i in range(len(s)):
+                s = s.replace(',,', ',')
+            s_dp = dp_tree(s)
+            return xuly_trangngu_daucau(s, s_dp)
 
+    
+        # Phát sinh câu hỏi 'Khi nào, ở đâu' 
+        cau_cn_dongtu = temp_cn_dongtu(cau, cau_dp)
+        cau_cn_tinhtu = temp_cn_tinhtu(cau, cau_dp)
+        cau_cn_la_danhtu = temp_cn_la_danhtu(cau, cau_dp)
+        if (cau_cn_dongtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_dongtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_dongtu[j][0]), cau_cn_dongtu[j][1]])
+        elif (cau_cn_tinhtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_tinhtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_tinhtu[j][0]), cau_cn_tinhtu[j][1]])
+        elif (cau_cn_la_danhtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_la_danhtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_la_danhtu[j][0]), cau_cn_la_danhtu[j][1]])
+
+        list_gt = []
+        for i in range(tn_index):
+            if s_dp[i][4] == 'B-PP':
+                list_gt.append(i)
+        if len(list_gt) >= 1:
+            # Trường hợp có giới từ
+            # Giới từ chỉ cách thức
+            for i in list_gt:
+                if s_dp[i][0].lower() == 'bằng':
+                    qa.append(['Bằng cách nào ' + xvhccd(cau) + '?', cum_tn])
+
+            # Giới từ chỉ nơi chốn
+            set_gioitu_noichon = gioitu_noichon.split(', ')
+            for i in list_gt:
+                if s_dp[i][0].lower() in set_gioitu_noichon:
+                    qa.append([cau + ' ở đâu?', cum_tn])
+            # Giới từ chỉ thời gian
+            set_gioitu_thoigian = gioitu_thoigian.split(', ')
+            for i in list_gt:
+                if s_dp[i][0].lower() in set_gioitu_thoigian:
+                    qa.append(['Khi nào ' + xvhccd(cau) + '?', cum_tn])
+        
+        else:
+            if 'tmod' in s_dp[tn_index][2]:
+                for i in s_dp[tn_index][6]:
+                    if s_dp[i][0].lower() == 'ngày':
+                        qa.append(['Vào ngày mấy ' + xvhccd(cau) + '?', cum_tn])
+                        return qa
+                qa.append(['Khi nào ' + xvhccd(cau) + '?', cum_tn])
+    else:
+        cau_cn_dongtu = temp_cn_dongtu(cau, cau_dp)
+        cau_cn_tinhtu = temp_cn_tinhtu(cau, cau_dp)
+        cau_cn_la_danhtu = temp_cn_la_danhtu(cau, cau_dp)
+        if (cau_cn_dongtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_dongtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_dongtu[j][0]), cau_cn_dongtu[j][1]])
+        elif (cau_cn_tinhtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_tinhtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_tinhtu[j][0]), cau_cn_tinhtu[j][1]])
+        elif (cau_cn_la_danhtu != 'SAI FORMAT'):
+            for j in range(len(cau_cn_la_danhtu)):
+                qa.append([cum_tn + dau + ' ' + xvhccd(cau_cn_la_danhtu[j][0]), cau_cn_la_danhtu[j][1]])
+    return qa
 # In[302]:
 
 
-temp_cn_dongtu('Tôi mua hoa tặng mẹ.')
+# temp_cn_dongtu('Tôi mua hoa tặng mẹ.')
 
 
 # In[285]:
@@ -1193,32 +1038,6 @@ def tach_vecau_dauhaicham(s):
     return s
 
 
-# In[233]:
-
-
-tach_vecau("Anh ấy đi du lịch và cô ấy đi làm.")
-
-
-# In[71]:
-
-
-tach_vecau_dauhaicham('Nóng trên mạng xã hội: Vui sao, nước mắt lại trào!.')
-
-
-# In[199]:
-
-
-temp_cn_dongtu("Anh ấy đi du lịch còn cô ấy đi làm.")
-
-
-# In[281]:
-
-
-tree = dp_tree("Tôi mua hoa tặng cho mẹ.")
-for i in tree:
-    print(i)
-
-
 # In[306]:
 
 
@@ -1247,18 +1066,19 @@ def loadFile(filename):
 def loadTextarea(text):
     lines = []
     count = 0
-    
-    st = sent_tokenize(text.strip())
-    for s in st:
-        if (s[-1] != '.'):
-            continue
-        set_tach_hai_cham = tach_vecau_dauhaicham(s)
-        for thc in set_tach_hai_cham:
-            thc = re.sub(r"\([^()]*\)", "", thc)
-            thc = thc.replace("(", "")
-            thc = thc.replace(")", "")
-            ve_cau = tach_vecau(thc)
-            lines.extend(ve_cau)
+    set_para = text.split('\n')
+    for para in set_para:
+        st = sent_tokenize(para.strip())
+        for s in st:
+            if (s[-1] != '.'):
+                continue
+            set_tach_hai_cham = tach_vecau_dauhaicham(s)
+            for thc in set_tach_hai_cham:
+                thc = re.sub(r"\([^()]*\)", "", thc)
+                thc = thc.replace("(", "")
+                thc = thc.replace(")", "")
+                ve_cau = tach_vecau(thc)
+                lines.extend(ve_cau)
     return lines
 
 
@@ -1266,78 +1086,51 @@ def loadTextarea(text):
 
 
 def createQuestion(text):
-    #lines = loadFile(filename)
     lines = loadTextarea(text)
     q = []
     loss = 0
     for l in lines:
-        kq = temp_cn_dongtu(l)
-        if kq != 'SAI FORMAT':
+        l_dp = dp_tree(l)
+        kq = xuly_trangngu_daucau(l, l_dp)
+        if kq != 'SAI FORMAT' and len(kq) > 0:
             q.append([l, kq])
+            print(1)
         else:
-            kq = temp_cn_tinhtu(l)
-            if kq != 'SAI FORMAT':
+            kq = temp_cn_dongtu(l, l_dp)
+            if kq != 'SAI FORMAT' and len(kq) > 0:
                 q.append([l, kq])
+                print(2)
             else:
-                kq = temp_cn_la_danhtu(l)
-                if kq != 'SAI FORMAT':
+                kq = temp_cn_tinhtu(l, l_dp)
+                if kq != 'SAI FORMAT' and len(kq) > 0:
                     q.append([l, kq])
+                    print(3)
                 else:
-                    loss += 1
-    bad = loss/len(lines)
+                    kq = temp_cn_la_danhtu(l, l_dp)
+                    if kq != 'SAI FORMAT' and len(kq) > 0:
+                        q.append([l, kq])
+                    else:
+                        loss += 1
+    bad = 1
+    if len(lines) > 0:
+        bad = loss/len(lines)
     return (q, bad)
-
 
 # In[317]:
 
+if __name__ == '__main__':
+    questions = createQuestion(sys.argv[1])
+    q = questions[0]
+    bad = questions[1]
 
-questions = createQuestion('Đất ở Việt Nam rất đa dạng, có độ phì cao, thuận lợi cho phát triển nông, lâm nghiệp. Việt Nam có hệ thực vật phong phú, đa dạng (khoảng 14 600 loài thực vật). Thảm thực vật chủ yếu là rừng rậm nhiệt đới, gồm các loại cây ưa ánh sáng, nhiệt độ lớn và độ ẩm cao.\nQuần thể động vật ở Việt Nam cũng phong phú và đa dạng, trong đó có nhiều loài thú quý hiếm được ghi vào Sách Đỏ của thế giới. Hiện nay, đã liệt kê được 275 loài thú có vú, 800 loài chim, 180 loài bò sát, 80 loài lưỡng thể, 2.400 loài cá, 5.000 loài sâu bọ. (Các rừng rậm, rừng núi đá vôi, rừng nhiều tầng lá là nơi cư trú của nhiều loài khỉ, voọc, vượn, mèo rừng. Các loài voọc đặc hữu của Việt Nam là voọc đầu trắng, voọc quần đùi trắng, voọc đen. Chim cũng có nhiều loài chim quý như trĩ cổ khoang, trĩ sao. Núi cao miền Bắc có nhiều thú lông dày như gấu ngựa, gấu chó, cáo, cầy...)\\nViệt Nam đã giữ gìn và bảo tồn một số vườn quốc gia đa dạng sinh học quý hiếm như Vườn quốc gia Hoàng Liên Sơn (khu vực núi Phan-xi-phăng, Lào Cai), Vườn quốc gia Cát Bà (Quảng Ninh), vườn quốc gia Cúc Phương (Ninh Bình),  vườn quốc gia  Phong Nha-Kẻ Bàng (Quảng Bình), vườn quốc gia Bạch Mã (Thừa Thiên Huế), vườn quốc gia Côn Đảo (đảo Côn Sơn, Bà Rịa-Vũng Tàu), vườn quốc gia Cát Tiên (Đồng Nai)… Các vườn quốc gia này là nơi cho các nhà sinh học Việt Nam và thế giới nghiên cứu khoa học, đồng thời là những nơi du lịch sinh thái hấp dẫn. Ngoài ra, UNESCO công nhận 8 khu dự trữ sinh quyển ở Việt Nam là khu dự trữ sinh quyển thế giới như Cần Giờ, Cát Tiên, Cát Bà, Châu thổ sông Hồng, Cù Lao Chàm, Vườn Quốc gia Mũi Cà Mau…')
-q = questions[0]
-bad = questions[1]
-
-
-# In[318]:
-
-
-# for i in q:
-#     print(i[0], end='')
-#     print(' -------- ', end='')
-#     print(i[1])
-
-
-# # In[273]:
-
-
-# print(bad)
-
-
-# # In[236]:
-
-
-# for l in lines:
-#     print(temp_cn_dongtu(l))
-
-
-# # In[20]:
-
-
-# print('Anh ấy nói: \"haha\".')
-
-
-# # In[260]:
-
-
-# a = re.sub(r"\([^()]*\)", "", "( Hom nay vui qua ) E may.")
-
-
-# # In[261]:
-
-
-# print(a)
-
-
-# In[ ]:
-
+    print('__result__')
+    
+    for i in q: 
+        # Selected sentence
+        print('\n',i[0])
+        # Generated questions
+        for j in i[1]:
+            print('\t', j[0], '\t', j[1])
 
 
 
